@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripMate — AI Travel Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <div class="app" id="app">
+
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">🌴</span>
+                <span class="logo-name">TripMate</span>
+            </div>
+            <button class="new-trip-btn" id="newTripBtn" onclick="newTrip()">
+                ✦ New Trip
+            </button>
+        </header>
+
+        <!-- Content area: hero, chat, and input all live here -->
+        <div class="content-area" id="contentArea">
+
+            <!-- Hero overlay -->
+            <section class="hero" id="hero">
+
+                <!-- Top: slim teal banner with title -->
+                <div class="hero-banner">
+                    <div class="bokeh b1"></div>
+                    <div class="bokeh b2"></div>
+                    <span class="plane">✈️</span>
+                    <h1 class="hero-title">Plan your <em>perfect trip</em></h1>
+                    <p class="hero-sub">Flights · Hotels · Full Itinerary — in seconds</p>
+                </div>
+
+                <!-- Bottom: suggestion pills -->
+                <div class="hero-bottom">
+                    <p class="hero-prompt">Start with a destination:</p>
+                    <div class="pills">
+                        <button class="pill pill-coral"  onclick="fillInput('Plan a 5-day trip to Paris in June')">🗼 5 days in Paris</button>
+                        <button class="pill pill-teal"   onclick="fillInput('Plan a 7-day trip to Bali')">🏖️ Bali retreat</button>
+                        <button class="pill pill-yellow" onclick="fillInput('Plan a week-long trip to Tokyo in April')">🏯 Week in Tokyo</button>
+                        <button class="pill pill-navy"   onclick="fillInput('Weekend trip to New York City')">🌆 NYC weekend</button>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- Chat messages -->
+            <main class="chat" id="chat">
+                <div class="messages" id="messages"></div>
+            </main>
+
+            <!-- Input bar — starts centered, slides to bottom on first send -->
+            <div class="input-bar" id="inputBar">
+                <div class="input-shell">
+                    <textarea
+                        id="input"
+                        class="input-field"
+                        placeholder="Tell me about your dream trip…"
+                        rows="1"
+                        onkeydown="handleKey(event)"
+                        oninput="grow(this)"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="send()" title="Send">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+                <p class="input-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</p>
+            </div>
+
+        </div>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
