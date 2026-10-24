@@ -1,0 +1,31 @@
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Secrets
+.env
+.env.*
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+
+# Dev/lock files not needed at runtime
+uv.lock
+pyproject.toml
+
+# Test and docs
+test.py
+README.md
+
+# Git
+.git
+.gitignore
+
+# Docker
+DockerFile
