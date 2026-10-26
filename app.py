@@ -23,6 +23,8 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles      # serves CSS/JS/images
 from fastapi.templating import Jinja2Templates   # renders HTML templates
 from pydantic import BaseModel                   # validates incoming JSON data
+import nest_asyncio                 # allows asyncio.run() to be called inside an already running event loop (useful for Jupyter or FastAPI)
+nest_asyncio.apply()
 
 from backend import run_travel_agent  # the AI agent that does the actual planning
 

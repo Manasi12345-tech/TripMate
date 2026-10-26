@@ -44,6 +44,9 @@ KEY CONCEPTS FOR BEGINNERS
    conversation history from Postgres on each new message.
 """
 
+# asyncio is needed to run async MCP tool calls from within synchronous
+# LangGraph agent functions (which cannot themselves be async).
+import asyncio
 import os
 import certifi
 from dotenv import load_dotenv
@@ -56,8 +59,12 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core. messages import HumanMessage, AIMessage, SystemMessage, AnyMessage
 from langchain_groq import ChatGroq
-from tools.flight_tool import search_flights
-from tools.tavily_tool import tavily_search
+# from tools.flight_tool import search_flights
+# Switched from the direct Tavily REST client to the MCP-based client.
+# tavily_mcp_search connects through the Tavily MCP server over streamable HTTP,
+# which allows future tool swaps without changing this file's logic.
+# from tools.tavily_tool import tavily_search
+from mcp_client import tavily_mcp_search, aviationstack_mcp_search, weather_mcp_search, forecast_mcp_search, extract_destination
 
 load_dotenv()
 
@@ -125,6 +132,7 @@ class TravelState(TypedDict):
     hotel_results: str
     itinerary: str
     llm_calls: int
+    weather_results: str
 
 # =========================
 # Flight Agent
@@ -133,17 +141,84 @@ class TravelState(TypedDict):
 # Does NOT use the LLM — it's a pure API lookup.
 # Writes the raw flight data into state["flight_results"].
 
+# def flight_agent(state: TravelState):
+#     query = state["user_query"]
+#     flight_data = asyncio.run(aviationstack_mcp_search("search_flights", {"query": query}))
+
+#     return {
+#         "flight_results": flight_data,
+#         "messages": [
+#             AIMessage(content="Flight results fetched.")
+#         ],
+#         "llm_calls": state.get("llm_calls", 0) + 1
+#     }
+
+FLIGHT_AGENT_PROMPT = """
+You are a travel flight expert.
+
+User Query:
+{query}
+
+Airport Information:
+{airport_data}
+
+Airline Information:
+{airline_data}
+
+Generate:
+
+1. Likely departure airport
+2. Likely arrival airport
+3. Airlines serving this route
+4. Typical flight duration
+5. Estimated airfare range
+6. Peak season pricing warning
+7. Booking advice
+
+Return concise travel guidance.
+"""
+
 def flight_agent(state: TravelState):
+    print("\nINSIDE FLIGHT AGENT\n")
+
     query = state["user_query"]
-    flight_data = search_flights(query)
+
+    def _api_error(result) -> bool:
+        """Return True if the MCP tool returned an API error response (not an exception)."""
+        return isinstance(result, list) and any(
+            "error" in str(item) or "function_access_restricted" in str(item)
+            for item in result
+        )
+
+    try:
+        airports = asyncio.run(aviationstack_mcp_search("list_airports"))
+        airlines = asyncio.run(aviationstack_mcp_search("list_airlines"))
+
+        print("\nAIRPORTS:", airports)
+        print("\nAIRLINES:", airlines)
+
+        prompt = FLIGHT_AGENT_PROMPT.format(
+            query=query,
+            airport_data=str(airports)[:3000],
+            airline_data=str(airlines)[:3000]
+        )
+
+        response = llm.invoke([
+            SystemMessage(content="You are an expert travel flight planner."),
+            HumanMessage(content=prompt)
+        ])
+
+        flight_data = response.content
+
+    except Exception as e:
+        flight_data = f"Flight information unavailable: {str(e)}"
 
     return {
         "flight_results": flight_data,
-        "messages": [
-            AIMessage(content="Flight results fetched.")
-        ],
+        "messages": [AIMessage(content="Flight recommendations generated")],
         "llm_calls": state.get("llm_calls", 0) + 1
     }
+
 
 # =========================
 # Hotel Agent
@@ -154,12 +229,42 @@ def flight_agent(state: TravelState):
 
 def hotel_agent(state: TravelState):
     query = f"Best hotels for {state['user_query']}"
-    hotel_results = tavily_search(query)
+    # tavily_mcp_search is an async function (it uses the MCP async client).
+    # asyncio.run() bridges the sync agent into the async call and blocks until
+    # the search result is returned before the agent continues.
+    hotel_results = asyncio.run(tavily_mcp_search(query))
 
     return {
         "hotel_results": hotel_results,
         "messages": [
             AIMessage(content="Hotel information fetched.")
+        ],
+        "llm_calls": state.get("llm_calls", 0) + 1
+    }
+
+def weather_agent(state: TravelState):
+    city = extract_destination(state["user_query"])
+
+    weather_data = asyncio.run(
+        weather_mcp_search(city)
+    )
+
+    forecast_data = asyncio.run(
+        forecast_mcp_search(city)
+    )
+
+    return {
+        "weather_results": f"""
+        Current Weather:
+        {weather_data}
+
+        Forecast:
+        {forecast_data}
+        """,
+        "messages": [
+            AIMessage(
+                content="Weather information fetched"
+            )
         ],
         "llm_calls": state.get("llm_calls", 0) + 1
     }
@@ -172,6 +277,10 @@ def hotel_agent(state: TravelState):
 # Writes the plan into state["itinerary"].
 
 def itinerary_agent(state: TravelState):
+    # Tavily hotel results can be thousands of tokens of raw article text.
+    # Truncate before passing to the LLM to avoid hitting token limits.
+    hotel_summary = str(state['hotel_results'])[:2500]
+
     prompt = f"""
 Create a complete travel itinerary.
 
@@ -182,7 +291,11 @@ Flight Results:
 {state['flight_results']}
 
 Hotel Results:
-{state['hotel_results']}
+{hotel_summary}
+
+Weather Results:
+{state['weather_results']}
+
 
 Make the itinerary practical, budget-aware, and easy to follow.
 """
@@ -206,19 +319,19 @@ Make the itinerary practical, budget-aware, and easy to follow.
 # This is the last node before END, so its message becomes the final answer.
 
 def final_agent(state: TravelState):
+    # final_agent only needs the synthesized itinerary — itinerary_agent already
+    # combined flights, hotels, and weather into it. Re-passing the raw fields
+    # here was the cause of the 8000-token Groq limit being exceeded.
     final_prompt = f"""
 Generate the final travel response for the user.
 
 User Request:
 {state['user_query']}
 
-Flights:
-{state['flight_results']}
+Weather:
+{str(state['weather_results'])[:600]}
 
-Hotels:
-{state['hotel_results']}
-
-Itinerary:
+Itinerary (includes flights, hotels, and day-by-day plan):
 {state['itinerary']}
 
 Format the final answer beautifully using these sections:
@@ -226,9 +339,10 @@ Format the final answer beautifully using these sections:
 1. Trip Summary
 2. Flight Information
 3. Hotel Suggestions
-4. Day-by-Day Itinerary
-5. Estimated Budget
-6. Final Recommendations
+4. Weather Information
+5. Day-by-Day Itinerary
+6. Estimated Budget
+7. Final Recommendations
 
 Important:
 - Be clear and practical.
@@ -261,12 +375,14 @@ graph = StateGraph(TravelState)
 
 graph.add_node("flight_agent", flight_agent)
 graph.add_node("hotel_agent", hotel_agent)
+graph.add_node("weather_agent", weather_agent)
 graph.add_node("itinerary_agent", itinerary_agent)
 graph.add_node("final_agent", final_agent)
 
 graph.add_edge(START, "flight_agent")
 graph.add_edge("flight_agent", "hotel_agent")
-graph.add_edge("hotel_agent", "itinerary_agent")
+graph.add_edge("hotel_agent", "weather_agent")
+graph.add_edge("weather_agent", "itinerary_agent")
 graph.add_edge("itinerary_agent", "final_agent")
 graph.add_edge("final_agent", END)
 
@@ -337,6 +453,7 @@ def run_travel_agent(user_input: str, thread_id: str | None = None):
             "user_query": user_input,
             "flight_results": "",
             "hotel_results": "",
+            "weather_results": "",
             "itinerary": "",
             "llm_calls": 0
         },
@@ -350,6 +467,7 @@ def run_travel_agent(user_input: str, thread_id: str | None = None):
         "thread_id": thread_id,
         "answer": final_answer,
         "flight_results": result.get("flight_results", ""),
+        "weather_results": result.get("weather_results", ""),
         "hotel_results": result.get("hotel_results", ""),
         "itinerary": result.get("itinerary", ""),
         "llm_calls": result.get("llm_calls", 0),
